@@ -5,26 +5,28 @@ import (
     "strings"
 )
 
-// CORS อนุญาตเฉพาะ origin ที่อยู่ในรายชื่อ
-func CORS(allowed []string, next http.Handler) http.Handler {
-    ok := map[string]bool{}
-    for _, o := range allowed {
-        ok[strings.TrimSpace(o)] = true
-    }
+func CORS(origins []string, next http.Handler) http.Handler {
     return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
         origin := r.Header.Get("Origin")
-        if ok[origin] {
-            h := w.Header()
-            h.Set("Access-Control-Allow-Origin", origin)
-            h.Add("Vary", "Origin")
-            h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-            h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
-            h.Set("Access-Control-Max-Age", "600")
+
+        for _, o := range origins {
+            if strings.TrimSpace(o) == origin {
+                w.Header().Set("Access-Control-Allow-Origin", origin)
+                w.Header().Set("Vary", "Origin")
+                break
+            }
         }
+
+        w.Header().Set("Access-Control-Allow-Methods",
+            "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+        w.Header().Set("Access-Control-Allow-Headers",
+            "Content-Type, Authorization")
+
         if r.Method == http.MethodOptions {
             w.WriteHeader(http.StatusNoContent)
             return
         }
+
         next.ServeHTTP(w, r)
     })
 }
