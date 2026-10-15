@@ -70,3 +70,4 @@ func (s *Store) GetMovie(ctx context.Context, id int64) (MovieDetail, error) {
         return m, ErrNotFound
     }
     return m, err
+}
