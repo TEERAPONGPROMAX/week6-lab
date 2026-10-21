@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/joho/godotenv/autoload" // โหลด .env ให้เองถ้ามีไฟล์ (ในเครื่อง) บน Render ไม่มีไฟล์ก็เงียบ
 
 	"moviehub/auth"
 	"moviehub/handler"
@@ -18,13 +19,13 @@ import (
 )
 
 func main() {
-	// 1. ตรวจสอบ JWT Secret
+	
 	secret := os.Getenv("JWT_SECRET")
 	if len(secret) <= 32 {
 		log.Fatal("JWT_SECRET ต้องยาวมากกว่า 32 ตัวอักษร")
 	}
 
-	// 2. เชื่อมต่อฐานข้อมูล PostgreSQL (Supabase)
+
 	pool, err := pgxpool.New(
 		context.Background(),
 		os.Getenv("DATABASE_URL"),
@@ -38,57 +39,60 @@ func main() {
 		log.Fatal("ต่อฐานข้อมูลไม่ติด: ", err)
 	}
 
-	// 3. ตั้งค่าระบบ Authentication
+	
 	tickets := &auth.Issuer{
 		Secret: []byte(secret),
 		TTL:    time.Hour,
 	}
 
-	// 4. สร้าง Handler
+	
 	h := &handler.Handler{
 		Store:   &store.Store{Pool: pool},
 		Tickets: tickets,
 	}
 
-	// 5. กำหนด API Routes
+	// login = ต้องมีตั๋ว, admin = ต้องมีตั๋วและบทบาทเป็น admin (ตรวจตั๋วก่อนเสมอ ค่อยดูบทบาท)
+    login := func(next http.HandlerFunc) http.HandlerFunc { return mw.RequireLogin(tickets, next) }
+    admin := func(next http.HandlerFunc) http.HandlerFunc { return login(mw.RequireRole("admin", next)) }
+
+
 	mux := http.NewServeMux()
 
-	// Authentication
+
 	mux.HandleFunc("POST /api/auth/register", h.Register)
 	mux.HandleFunc("POST /api/auth/login", h.Login)
 
-	// Movies
+	mux.HandleFunc("GET /api/me", login(h.Me))
+    mux.HandleFunc("GET /api/genres", h.Genres)
+
+	
 	mux.HandleFunc("GET /api/movies", h.SearchMovies)
 	mux.HandleFunc("GET /api/movies/{id}", h.GetMovie)
 
-	// Reviews
+	
 	mux.HandleFunc("GET /api/movies/{id}/reviews", h.ListReviews)
 
-	// 6. ตั้งค่า CORS สำหรับ Frontend บน Vercel
+	// หลังบ้าน: ทุกเส้นทางใต้ /api/admin ผ่าน admin(...) ไม่มีข้อยกเว้น
+    mux.HandleFunc("GET /api/admin/stats", admin(h.AdminStats))
+    mux.HandleFunc("GET /api/admin/members", admin(h.AdminMembers))
+    mux.HandleFunc("PUT /api/admin/members/{id}/role", admin(h.AdminSetRole))
+    mux.HandleFunc("GET /api/admin/movies/{id}", admin(h.AdminGetMovie))
+    mux.HandleFunc("POST /api/admin/movies", admin(h.AdminCreateMovie))
+    mux.HandleFunc("PUT /api/admin/movies/{id}", admin(h.AdminUpdateMovie))
+    mux.HandleFunc("DELETE /api/admin/movies/{id}", admin(h.AdminDeleteMovie))
+
+	
 	origins := strings.Split(
 		os.Getenv("ALLOWED_ORIGINS"),
 		",",
 	)
 
-	// 7. ตั้งค่า Port สำหรับ Render
-	port := os.Getenv("PORT")
-	if port == "" {
-		port = "8080"
-	}
+	port := os.Getenv("PORT") // Render ส่งมาให้ ในเครื่องไม่มีก็ใช้ 8080
+    if port == "" {
+        port = "8080"
+    }
 
-	// 8. เพิ่ม Logging และ CORS Middleware
-	handlerWithMiddleware := mw.Logging(
-		mw.CORS(origins, mux),
-	)
 
-	// 9. เริ่มต้น Backend Server
-	log.Println("MovieHub API ทำงานที่ Port:", port)
-	log.Println("Allowed Origins:", origins)
-
-	log.Fatal(
-		http.ListenAndServe(
-			":"+port,
-			handlerWithMiddleware,
-		),
-	)
+	log.Println("MovieHub API ฟังอยู่ที่ :"+port, "ต้อนรับ", origins)
+    log.Fatal(http.ListenAndServe(":"+port, mw.Logging(mw.CORS(origins, mux))))
 }
